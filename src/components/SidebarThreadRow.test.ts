@@ -47,6 +47,13 @@ describe("sidebar thread visibility", () => {
     expect(visibleSidebarThreads(rows, "8").map((task) => task.threadId)).toEqual(["0", "1", "2", "3", "4", "5", "7", "8", "9"]);
     expect(visibleSidebarThreads(rows, "8", "", [], true)).toEqual(rows);
   });
+
+  it("leaves a burst's parts to its card, unless one is open or needs the person", () => {
+    const openedBy = { botId: "b", name: "Bot", at: 1, burstId: "run-1" };
+    const parts = [{ threadId: "quiet", title: "Quiet", openedBy }, { threadId: "open", title: "Open", openedBy }, { threadId: "asks", title: "Asks", openedBy, unread: true }];
+    expect(visibleSidebarThreads(parts, "open").map((task) => task.threadId).sort()).toEqual(["asks", "open"]);
+    expect(visibleSidebarThreads(parts, "open", "", [], true)).toEqual(parts);
+  });
   it("searches folder names and historical thread titles without the recent-row limit", () => {
     expect(visibleSidebarThreads(tasks, "0", " RESEARCH ", [{ id: "research", name: "Research" }]).map((task) => task.threadId)).toEqual(["8", "9"]);
     expect(visibleSidebarThreads(tasks, "0", "thread 9").map((task) => task.threadId)).toEqual(["9"]);
@@ -322,7 +329,7 @@ describe("thread title direction", () => {
   it("renders the title with dir=auto and leaves the time a fixed column", () => {
     const arabic = "انسخ محتوى الذكاء الاصطناعي وصمم منشورات";
     const arabicClass = titleSpan(row(arabic), arabic);
-    const englishClass = titleSpan(row("New thread"), "New thread");
+    const englishClass = titleSpan(row("New thread"), "Untitled chat");
     const withByline = titleSpan(row("QA PR 245", { botId: "scout", name: "Scout", at: 1 }), "QA PR 245");
     for (const classes of [arabicClass, englishClass, withByline]) {
       expect(classes).toContain("min-w-0");

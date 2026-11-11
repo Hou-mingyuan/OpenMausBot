@@ -1,7 +1,7 @@
 // ＋ at the end of the rail: one sheet of choices. A new workspace on this computer (named here, then main opens it), a new
 // organization on the Team plan the person pays for (when they run one), buy a Cloud (the buying sheet: another Cloud right
 // here, or the first one on this computer's own sheet), or connect to a server of the person's own.
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Building2, Cloud, Laptop, Loader2, Server, UserRound, X } from "lucide-react";
 import type { CloudSwatch } from "../../electron/cloud-list.mjs";
 import type { RailAddChoices, RailPlace } from "../../electron/cloud-rail.mjs";
@@ -17,6 +17,7 @@ import { computerName, createLocal, placeInitials, suggestedLocalName } from "@/
 import { AddCloudFlow } from "./cloud-buy/AddCloudFlow";
 import { NewOrganization } from "./cloud-buy/NewOrganization";
 import { BackLink, FIELD, Heading, PRIMARY_WIDE } from "./cloud-buy/parts";
+import { Layer, useIsTopLayer } from "./Layer";
 import { SwatchRadios } from "./SwatchRadios";
 
 const PAIR_COMMAND = "npx openmausbot pair";
@@ -34,6 +35,13 @@ function problemText(problem: ServerProbeProblem, host?: string): string {
   return t(CONNECT_PROBLEM_KEYS[problem] as LocaleKey, { host: host ?? "", example: EXAMPLE_ADDRESS });
 }
 
+/** The host the person typed, for a line about a check that failed before it could name one. */
+function hostOf(address: string, code: string): string | undefined {
+  const parsed = parseServerInput(address, code);
+  if (parsed.ok && parsed.candidates[0]) return new URL(parsed.candidates[0]).host;
+  try { return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(address.trim()) ? address.trim() : `http://${address.trim()}`).host || undefined; } catch { return undefined; }
+}
+
 const TRANSPORT_KEY = { https: "connect.found.https", tailscale: "connect.found.tailscale", "private-http": "connect.found.privateHttp", loopback: "connect.found.loopback" } as const;
 
 /** Connect to a server: a link, or an address with the pairing code typed apart (a code pasted alone is moved to its
@@ -45,6 +53,7 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
   const [code, setCode] = useState("");
   const [movedCode, setMovedCode] = useState(false);
   const [probe, setProbe] = useState<ServerProbe | null>(null);
+  const [probing, setProbing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const codeField = useRef<HTMLInputElement>(null);
@@ -54,10 +63,14 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
   const linkHasCode = parsed.ok && !code.trim() && (parsed.code !== null || parsed.credential !== null);
   const showCode = movedCode || (address.trim() !== "" && !linkHasCode && !(parsed.ok === false && parsed.problem === "codeOnly"));
   useEffect(() => {
-    if (!canProbe || !address.trim()) { setProbe(null); return; }
+    if (!canProbe || !address.trim()) { setProbe(null); setProbing(false); return; }
     let current = true;
+    setProbing(true);
     const timer = window.setTimeout(() => {
-      void workspaces!.probe!(address, code).then((found) => { if (current) setProbe(found); }).catch(() => { if (current) setProbe(null); });
+      void workspaces!.probe!(address, code)
+        .then((found) => { if (current) setProbe(found); })
+        .catch(() => { if (current) setProbe({ outcome: "problem", problem: "unreachable", host: hostOf(address, code) }); })
+        .finally(() => { if (current) setProbing(false); });
     }, 400);
     return () => { current = false; window.clearTimeout(timer); };
   }, [address, code, canProbe, workspaces]);
@@ -113,6 +126,9 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
       <span className="flex flex-col gap-1 text-[12px] font-normal text-ink-secondary">{t("connect.noCode")}<CommandLine command={PAIR_COMMAND} /></span>
     </label>}
     {shownProblem && <p role="alert" data-connect-problem className="text-[13px] text-danger">{shownProblem}</p>}
+    {canProbe && probing && !found && !shownProblem && <p data-connect-checking className="inline-flex items-center gap-1.5 text-[13px] text-ink-secondary">
+      <Loader2 size={13} className="animate-spin" aria-hidden="true" />{t("connect.checking")}
+    </p>}
     <div><button type="submit" data-own-server-connect disabled={busy || !address.trim() || (canProbe && !found)} className="ui-button ui-button-primary inline-flex items-center gap-2">
       {busy && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}{found ? t("connect.to", { name: found.label }) : t("rail.connect")}
     </button></div>
@@ -122,7 +138,7 @@ export function OwnServerLink({ onBack, onConnected, connect = null, start = nul
 function Choice({ icon, title, sub, onClick, kind }: { icon: ReactNode; title: string; sub: string; onClick: () => void; kind: string }) {
   return <button type="button" data-place-add-choice={kind} onClick={onClick}
     className="flex min-w-0 flex-1 flex-col items-start gap-2 rounded-2xl border border-hairline bg-card p-5 text-start transition-colors hover:border-accent/60 hover:bg-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">
-    <span aria-hidden="true" className="grid size-9 place-items-center rounded-[10px] bg-accent/12 text-accent-text">{icon}</span>
+    <span aria-hidden="true" className="grid size-9 place-items-center rounded-[8px] bg-accent/12 text-accent-text">{icon}</span>
     <span className="text-[15px] font-semibold text-ink">{title}</span>
     <span className="text-[13px] leading-snug text-ink-secondary">{sub}</span>
   </button>;
@@ -131,12 +147,19 @@ function Choice({ icon, title, sub, onClick, kind }: { icon: ReactNode; title: s
 const FOCUSABLE = "button:not([disabled]):not([tabindex='-1']), input:not([disabled]):not([tabindex='-1']), [href], [tabindex='0']";
 
 /** The sheet over the app, like the buying sheet's: Escape and Close close it, Tab stays in it, focus goes back after. */
-export function RailSheet({ wide = false, focusKey, onClose, children }: { wide?: boolean; focusKey: string; onClose: () => void; children: ReactNode }) {
+export function RailSheet(props: { wide?: boolean; focusKey: string; onClose: () => void; children: ReactNode }) {
+  return <Layer modal><RailSheetCard {...props} /></Layer>;
+}
+
+function RailSheetCard({ wide = false, focusKey, onClose, children }: { wide?: boolean; focusKey: string; onClose: () => void; children: ReactNode }) {
   const sheet = useRef<HTMLDivElement>(null);
+  const isTop = useIsTopLayer();
+  const close = useEffectEvent(onClose);
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (!isTop()) return;
+      if (event.key === "Escape") { event.preventDefault(); close(); return; }
       if (event.key !== "Tab") return;
       const controls = [...(sheet.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
       if (!controls.length) return;
@@ -146,7 +169,7 @@ export function RailSheet({ wide = false, focusKey, onClose, children }: { wide?
     };
     window.addEventListener("keydown", onKey, true);
     return () => { window.removeEventListener("keydown", onKey, true); if (opener?.isConnected) opener.focus(); };
-  }, [onClose]);
+  }, [isTop]);
   useEffect(() => {
     if (sheet.current?.contains(document.activeElement) && document.activeElement !== sheet.current) return;
     (sheet.current?.querySelector<HTMLElement>("[data-autofocus]") ?? sheet.current?.querySelector<HTMLElement>("#cloud-add-title"))?.focus();
