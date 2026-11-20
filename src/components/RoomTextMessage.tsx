@@ -13,7 +13,7 @@ import { cn } from "@/lib/cn";
 import { formatTime, type Bot, type Message } from "@/state/store";
 import { useStoreDispatch, useStoreSelector } from "@/state/store-select";
 import { useStoreRef } from "@/state/store-ref";
-import { isLiveReply, streamedReply } from "@/state/live-reply";
+import { isLiveReply, streamedReply, useLiveRow } from "@/state/live-reply";
 import { useTeammates } from "@/state/team-people";
 import { stripLeakedSystemHarnessMessages } from "../../shared/system-message-guard.ts";
 import { ThreadRefText } from "./ThreadRefs";
@@ -66,14 +66,15 @@ function sameRow(previous: RoomTextMessageProps, next: RoomTextMessageProps): bo
   return keys.length === Object.keys(previous).length && keys.every((key) => key === "members" ? sameMembers(previous.members, next.members) : Object.is(previous[key], next[key]));
 }
 
-/** One text message in a room: drawn again only when its own props or the store slices it shows change. */
+/** One text message in a room: drawn again only when its own props or the store slices it shows change, or, while it
+ * streams, its words. */
 export const RoomTextMessage = memo(function RoomTextMessage({
   groupId,
   threadId,
   dm,
   pinned,
   working,
-  message: m,
+  message: row,
   members,
   replyTarget,
   emerging,
@@ -83,6 +84,7 @@ export const RoomTextMessage = memo(function RoomTextMessage({
   phone,
   localVoice,
 }: RoomTextMessageProps) {
+  const m = useLiveRow(threadId, row);
   const dispatch = useStoreDispatch(), store = useStoreRef();
   const focusNonce = useStoreSelector((state) => {
     const focus = state.focusMessage;
@@ -195,7 +197,7 @@ export const RoomTextMessage = memo(function RoomTextMessage({
                 }}
               />}
               {m.via === "api" && (
-                <div className="mt-1 text-[11px] text-ink-secondary">{t("room.viaApi")}</div>
+                <div className="mt-1 text-[12px] leading-4 text-ink-secondary">{t("room.viaApi")}</div>
               )}
               {collapsible && (
                 <button type="button" onClick={() => setExpanded(true)} className="mt-1 text-[13px] text-ink-secondary hover:text-ink">
@@ -231,7 +233,7 @@ export const RoomTextMessage = memo(function RoomTextMessage({
           )}
         </div>
         {!tabled && botActions}
-        <span className="self-end pb-1 text-[11px] tabular-nums text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100">
+        <span className="self-end pb-1 text-[12px] font-medium leading-4 tabular-nums whitespace-nowrap text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100">
           {formatTime(m.at)}
         </span>
       </div>

@@ -54,7 +54,7 @@ export interface ThreadRouteDeps {
   pageSize(raw: string | null): number | null | undefined;
   messagePage(threadId: string, limit: number | undefined): MessagePage;
   messagePageBefore(threadId: string, before: string, limit: number): MessagePage | null;
-  messageWindow(threadId: string, messageId: string, limit: number): { messages: Array<Message | Record<string, unknown>>; hasMore: boolean } | null;
+  messageWindow(threadId: string, messageId: string, limit: number): { messages: Array<Message | Record<string, unknown>>; hasMore: boolean; activeLeafId: string | null } | null;
   publicBotQueuedMessages(): ReturnType<typeof queuedSteerSnapshot>;
   publicGroupState(record: GroupRecord): WireGroup;
   wireBot(bot: BotRecord): WireBot;
@@ -151,14 +151,14 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
       if (around) {
         const window = messageWindow(threadId, around, limit ?? DEFAULT_PAGE);
         if (!window) return json(res, 404, { error: "no such message" });
-        return json(res, 200, { ...window, activeLeafId: store.activeLeaf(threadId) });
+        return json(res, 200, window);
       }
       // An unknown cursor must not answer with the newest page: the client would paginate in a circle.
       if (before) {
         const page = messagePageBefore(threadId, before, limit ?? DEFAULT_PAGE);
         return page ? json(res, 200, page) : json(res, 404, { error: "no such message" });
       }
-      return json(res, 200, { ...messagePage(threadId, limit ?? DEFAULT_PAGE), activeLeafId: store.activeLeaf(threadId) });
+      return json(res, 200, messagePage(threadId, limit ?? DEFAULT_PAGE));
     }
 
     m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/image$/);
@@ -204,7 +204,10 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
 
       const message = store.messagesFor(threadId).find((candidate) => candidate.id === m![2]);
       if (!message) return json(res, 404, { error: "no such message" });
-      if (message.kind !== "text" || (!message.text && !message.attachments?.length)) {
+      if (!visible.thread(threadId)) return json(res, 404, { error: "no such conversation" });
+      // A non-text card (a hand-off result is an activity message) shares only what it explicitly attaches.
+      const attachmentsOnly = message.kind !== "text";
+      if ((attachmentsOnly && !message.attachments?.length) || (!message.text && !message.attachments?.length)) {
         return json(res, 403, { error: "that message does not share this file" });
       }
       const messageText = message.text ?? "";
@@ -212,6 +215,8 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
       const mediaGrant = mediaId ? mediaLinks.use(mediaId, threadId, message.id, auth) : null;
       if (mediaId && !mediaGrant) return json(res, 404, { error: "that video link has expired", code: "media_link_expired" });
       const body = method === "POST" ? await readBody(req) : null;
+      // Access may have been revoked while the body was in flight; ask again before any file is opened.
+      if (body && !visibleTo(viewerFor(auth)).thread(threadId)) return json(res, 404, { error: "no such conversation" });
       const asksMediaLink = body?.media === true;
       const rawReference = streamsMessageImage ? url.searchParams.get("ref") : null;
       if (streamsMessageImage && (!rawReference || !/^\d+$/.test(rawReference))) {
@@ -229,6 +234,9 @@ export function createThreadRoutes(deps: ThreadRouteDeps): RouteHandler {
       const botAttachment = message.role === "bot"
         ? message.attachments?.find((attachment) => attachment.path === href)
         : undefined;
+      if (attachmentsOnly && !botAttachment) {
+        return json(res, 403, { error: "that message does not share this file" });
+      }
       if (message.role === "user") {
         downloadName = messageAttachmentName(messageText, href) ?? undefined;
         if (!downloadName) {
