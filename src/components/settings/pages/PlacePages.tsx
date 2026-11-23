@@ -25,6 +25,7 @@ import { McpCallTimeoutSettings } from "../../McpCallTimeoutSettings";
 import { DefaultBotSettings } from "../../NewBotDialog";
 import { PlaceLookRows } from "../../PlaceLookCard";
 import { ProfileFields } from "../../ProfileSettings";
+import { RemoteTeammatesSettings } from "../../RemoteTeammatesSettings";
 import { RoomTurnTimeoutSettings } from "../../RoomTurnTimeoutSettings";
 import { SavedStepsRow } from "../../SavedStepsRow";
 import { Card, SettingRow, SettingsDisclosureRow, SettingsFoldRow, SettingsGroup, SettingsLinkRow, SettingsRows } from "../../SettingsPrimitives";
@@ -132,12 +133,12 @@ export function AiPage() {
       {!ctx.advanced && (
         <SettingsGroup block="ai-keys-fold">
           <SettingsRows>
-            <SettingsFoldRow id="ai-other-services" title={t("settings.ai.otherServices")} value={String(count)} open={shown} onToggle={() => setServices(!shown)} />
+            <SettingsFoldRow id="ai-other-services" title={t("settings.ai.otherServices")} subtitle={t("settings.ai.otherServicesLine")} value={String(count)} open={shown} onToggle={() => setServices(!shown)} />
           </SettingsRows>
         </SettingsGroup>
       )}
       {shown && (
-        <SettingsGroup label={ctx.advanced ? t("settings.ai.otherServices") : undefined} block="ai-keys">
+        <SettingsGroup label={ctx.advanced ? t("settings.ai.otherServices") : undefined} description={t("settings.ai.otherServicesLine")} block="ai-keys">
           <KeysPage bare exclude={anchor === "ai-keys" ? [] : ["ai"]} />
         </SettingsGroup>
       )}
@@ -164,6 +165,7 @@ export function BotsPage() {
     <SettingsGroup label={t("settings.bots.newBots")} block="new-bots">
       <SettingsRows><NewBotEffortRow /><DefaultBotSettings simple /></SettingsRows>
     </SettingsGroup>
+    {!(ctx.team && !ctx.admin) && <AdvancedSection anchor="remote-teammates"><AdminOnly><RemoteTeammatesSettings /></AdminOnly></AdvancedSection>}
     {!(ctx.team && !ctx.admin) && <AdvancedSection anchor="limits" also={["parallel", "group-turns", "tool-time", "keep-warm"]}><SettingsGroup label={t("settings.simple.more.limits")} block="limits">
       <SettingsRows selectWidth={160}>
         <div data-settings-block="group-turns" className="contents"><RoomTurnTimeoutSettings /></div>

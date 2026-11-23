@@ -13,6 +13,7 @@ import { uploadDraftImage } from "@/lib/composer-uploads";
 import { intakeFilesWithNotice } from "@/lib/attach-notice";
 import { activeLocale, t } from "@/lib/i18n";
 import { useAdvancedMode } from "@/lib/interface-mode";
+import { isDictationToggle, isMacPlatform } from "@/lib/keyboard-shortcuts";
 import { imeComposing, sendKeyLabel, sendsMessage, useSendKey } from "@/lib/send-key";
 import { alternateSend, alternateSendLabel, useFollowUpDefault } from "@/lib/follow-up"; import { followUpChoices, resolveFollowUp, type FollowUp } from "../../shared/follow-up";
 import {
@@ -71,6 +72,8 @@ import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "
 import { CallButton } from "./CallView";
 import { GroupCallButton } from "./GroupCallView";
 import { ApprovalChip, ComposerPlusMenu, GoalToggle } from "./ComposerPlusMenu";
+import { PlaceMark } from "./PlaceChip";
+import type { Place } from "@/lib/place";
 import { PhonePlus } from "./PhonePlus";
 import { useThreadApproval } from "./thread-approval";
 import { useTallPill } from "./composer-wrap";
@@ -227,6 +230,7 @@ export function Composer({
     [text, editText, editAttachments],
   );
   const { recording, ready: micReady, speechError, toggle: toggleMic, stop: stopDictation } = useComposerDictation({ draftId, text, onText: editText });
+  const micShown = !locked && !busy && micReady;
   const [caret, setCaret] = useState(0);
   const shellRef = useRef<HTMLDivElement>(null);
   const tall = useTallPill(shellRef, simpleDock);
@@ -239,10 +243,11 @@ export function Composer({
   draftIdRef.current = draftId;
   const caretRef = useRef(0);
   caretRef.current = caret;
-  const refocusInput = useCallback(() => {
+  const escapeBlurs = useRef(0);
+  const refocusInput = useCallback((escapesBefore: number) => {
     requestAnimationFrame(() => {
       const input = inputRef.current;
-      if (!input || input.disabled || !composerShouldRefocus(document.activeElement, input)) return;
+      if (escapeBlurs.current !== escapesBefore || !input || input.disabled || !composerShouldRefocus(document.activeElement, input)) return;
       const at = Math.min(caretRef.current, input.value.length);
       input.focus();
       input.setSelectionRange(at, at);
@@ -482,10 +487,13 @@ export function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const modeBot = group ? undefined : bot;
+  const pinPlace = (surface: Place | null) => modeBot && dispatch({ type: "updateTask", botId: modeBot.id, threadId: modeBot.threadId, patch: { surface } });
+  const place = modeBot && !remoteClient && advanced ? { bot: modeBot, task: composerTask, disabled: Boolean(modeBot.busy), onPin: pinPlace } : undefined;
   const { choice: approvalChoice, dialogs: approvalDialogs } = useThreadApproval(modeBot);
   const uploadImage = useCallback((file: File) => uploadDraftImage(draftId, file), [draftId]);
   const pickFiles = async (picked: FileList | readonly File[] | null) => {
     if (!picked?.length) return;
+    const escapesBefore = escapeBlurs.current;
     changeDraftAttachmentPending(draftId, true);
     try {
       const { attachments: added, notice } = await intakeFilesWithNotice(Array.from(picked), {
@@ -500,7 +508,7 @@ export function Composer({
     } finally {
       changeDraftAttachmentPending(draftId, false);
     }
-    refocusInput();
+    refocusInput(escapesBefore);
   };
 
   const hasContent = Boolean(effectiveText.trim()) || attachments.length > 0;
@@ -787,12 +795,7 @@ export function Composer({
               teach={canLearn ? teachTask : undefined}
               approval={approvalChoice && modeBot && { name: modeBot.name, choice: approvalChoice }}
               callBotId={bot && !group ? bot.id : undefined}
-              place={modeBot && !remoteClient && advanced ? {
-                bot: modeBot,
-                task: composerTask,
-                disabled: Boolean(modeBot.busy),
-                onPin: (surface) => dispatch({ type: "updateTask", botId: modeBot.id, threadId: modeBot.threadId, patch: { surface } }),
-              } : undefined}
+              place={place}
             />
           </div>
         )}
@@ -816,6 +819,7 @@ export function Composer({
               {/* Simple mode shows a mode's chip only while it is on, so a choice made in the + menu or the bot panel stays in view. */}
               {goal?.on && <GoalToggle {...goal} />}
               {approvalChoice && profile && bot && approvalModeFor(bot) !== approvalModeFor(profile) && <ApprovalChip choice={approvalChoice} />}
+              {modeBot && <PlaceMark bot={modeBot} task={composerTask} />}
             </div>
           )}
           <MentionTextarea
@@ -877,6 +881,11 @@ export function Composer({
                 return;
               }
             }
+            if (micShown && isDictationToggle(e.nativeEvent)) {
+              e.preventDefault();
+              if (!e.nativeEvent.repeat) toggleMic();
+              return;
+            }
             if (onClearReply && escapeCancelsReply(e.nativeEvent, { replying: Boolean(replyTo), recording })) {
               e.preventDefault();
               onClearReply();
@@ -899,7 +908,12 @@ export function Composer({
               }
               send(followUpFor(alternateSend(e.nativeEvent, sendKey)));
             }
-            if (e.key === "Escape" && recording) stopDictation();
+            if (e.key !== "Escape") return;
+            if (recording) stopDictation();
+            else if (!e.defaultPrevented) {
+              escapeBlurs.current += 1;
+              e.currentTarget.blur();
+            }
           }}
           // Not disabled during an upload: a disabled element drops keyboard focus for good. send() refuses while one
           // is pending.
@@ -922,7 +936,7 @@ export function Composer({
             <ComposerAdvancedTools profile={profile} bot={modeBot} task={composerTask} locked={locked} remoteClient={remoteClient}
               onAttach={() => fileInput.current?.click()} goal={goal} teach={canLearn ? teachTask : undefined} approval={approvalChoice}
               callBotId={callShown && bot && !group ? bot.id : undefined}
-              onPin={(surface) => modeBot && dispatch({ type: "updateTask", botId: modeBot.id, threadId: modeBot.threadId, patch: { surface } })} />
+              onPin={pinPlace} />
           )}
           <div data-composer-actions className={cn("flex items-center", simpleDock ? "gap-2" : "gap-1", stacked && "ms-auto")}>
           {(simpleDock ? stoppable : busy && mayStop) && !locked && (
@@ -943,7 +957,7 @@ export function Composer({
           </button>
         )}
         {!locked && <ComposerContextMenu bot={bot} group={group} members={members} className={cn(simpleDock ? "size-7" : "size-8", advanced || singleRow ? "text-ink-secondary hover:bg-raised hover:text-ink" : SIMPLE_CONTROL)} />}
-        {!locked && !busy && micReady && (
+        {micShown && (
           <button
             onClick={toggleMic}
             aria-label={recording ? t("composer.dictation.stop") : t("composer.dictation.start")}
@@ -954,7 +968,7 @@ export function Composer({
                 ? "animate-pulse bg-danger/20 text-danger"
                 : advanced || singleRow ? "text-ink-secondary hover:bg-raised hover:text-ink" : SIMPLE_CONTROL,
             )}
-            title={recording ? t("composer.dictation.stopHint") : t("composer.dictation.hint")}
+            title={recording ? t("composer.dictation.stopHint") : t("composer.dictation.hintKey", { keys: isMacPlatform() ? "⌘D" : "Ctrl+D" })}
           >
             <Mic size={16} className="[&_rect]:fill-current" />
           </button>
